@@ -9,7 +9,8 @@ from keras.layers.embeddings import Embedding
 from keras.layers.recurrent import SimpleRNN, GRU, LSTM
 from keras.layers.core import Dense, Dropout
 from keras.layers.wrappers import TimeDistributed
-from keras.layers import Convolution1D, MaxPooling1D
+from keras.layers import Conv1D, MaxPooling1D, Bidirectional
+from keras_contrib.layers import CRF
 
 import progressbar
 
@@ -31,12 +32,16 @@ n_vocab = len(idx2w)
 
 # Define model
 model = Sequential()
-model.add(Embedding(n_vocab,100))
-model.add(Convolution1D(64,5,border_mode='same', activation='relu'))
-model.add(Dropout(0.25))
-model.add(GRU(100,return_sequences=True))
+model.add(Embedding(n_vocab, 100))
+#model.add(Conv1D(64, 5, padding='same', activation='relu'))
+#model.add(Dropout(0.25))
+#model.add(GRU(100, return_sequences=True))
+model.add(Bidirectional(GRU(100, return_sequences=True)))
 model.add(TimeDistributed(Dense(n_classes, activation='softmax')))
+#crf = CRF(n_classes, sparse_target=True)
+#model.add(crf)
 model.compile('rmsprop', 'categorical_crossentropy')
+#model.compile('rmsprop', crf.loss_function, metrics=['categorical_crossentropy'])
 
 ### Ground truths etc for conlleval
 train_x, train_ne, train_label = train_set
@@ -50,6 +55,9 @@ groundtruth_train = [ list(map(lambda x: idx2la[x], y)) for y in train_label]
 
 ### Training
 n_epochs = 100
+early_stop_patience = 5
+early_stop_min_delta = 0
+patience_count = 0
 
 train_f_scores = []
 val_f_scores = []
@@ -109,12 +117,23 @@ for i in range(n_epochs):
     con_dict = conlleval(predword_val, groundtruth_val, words_val, 'r.txt')
     val_f_scores.append(con_dict['f1'])
     
-    print('Loss = {}, Precision = {}, Recall = {}, F1 = {}'.format(avgLoss, con_dict['r'], con_dict['p'], con_dict['f1']))
+    print('Loss = {}, Precision = {}, Recall = {}, F1 = {}'.format(
+    	avgLoss, con_dict['r'], con_dict['p'], con_dict['f1']))
 
     if con_dict['f1'] > best_val_f1:
     	best_val_f1 = con_dict['f1']
     	open('model_architecture.json','w').write(model.to_json())
     	model.save_weights('best_model_weights.h5',overwrite=True)
     	print("Best validation F1 score = {}".format(best_val_f1))
+    	patience_count = 0
+    else:
+    	if (best_val_f1 - con_dict['f1']) > early_stop_min_delta:
+	    	patience_count += 1
+	    	if patience_count >= early_stop_patience:
+	    		# Stop training
+	    		print('Best score: Precision = {}, Recall = {}, F1 = {}'.format(
+	    			con_dict['r'], con_dict['p'], con_dict['f1']))
+	    		break
+
     print()
     
